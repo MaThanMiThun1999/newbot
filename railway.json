@@ -1,0 +1,11 @@
+{
+  "build": {
+    "builder": "python",
+    "startCommand": "python chatbot_server/chatbot_api.py"
+  },
+  "deploy": {
+    "env": {
+      "PORT": "8080"
+    }
+  }
+}
