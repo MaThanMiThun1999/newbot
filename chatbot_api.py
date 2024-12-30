@@ -3,7 +3,7 @@ import re
 import random
 import torch
 from transformers import DistilBertTokenizer, DistilBertModel, AdamW
-from googletrans import Translator
+#import googletrans (we will remove this dependency)
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 import json
@@ -110,13 +110,20 @@ class DistilBertClassifier(nn.Module):
 model = DistilBertClassifier(num_labels)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
-
-# Model Loading Logic
 MODEL_PATH = 'trained_model.pth'
+model_loaded = False
 if os.path.exists(MODEL_PATH):
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only = True))
-    logging.info("Trained model loaded successfully.")
+    try:
+        model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only = True))
+        logging.info("Trained model loaded successfully.")
+        model.eval()
+        model_loaded = True
+    except Exception as e:
+        logging.error(f"Error loading the model: {e}")
 else:
+    logging.warning(f"Trained model not found at: {MODEL_PATH}, training a new one.")
+
+if not model_loaded:
     # Splitting the dataset into training and validation
     dataset = torch.utils.data.TensorDataset(input_ids, attention_masks, labels)
     train_size = int(0.9 * len(dataset))
@@ -124,8 +131,6 @@ else:
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
     train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=16)
     validation_dataloader = DataLoader(val_dataset, batch_size=16)
-
-    # Initialize DistilBERT model
     
     optimizer = AdamW(model.parameters(), lr=2e-5)
 
@@ -146,50 +151,55 @@ else:
       logging.info(f"Epoch {epoch+1}, Average Training Loss: {avg_train_loss:.2f}")
 
     torch.save(model.state_dict(), MODEL_PATH)
+    model.eval()
     logging.info(f"Model trained and saved to {MODEL_PATH}")
+    model_loaded = True
 
-model.eval()  # Set model to evaluation mode
-
-translator = Translator()
+#translator = Translator() (We will remove this for now)
 
 # --- Chatbot Functions ---
 def get_response(user_input, language_code):
-    translated_input = translator.translate(user_input, src=language_code, dest='en').text
-    txt = re.sub("[^a-zA-Z']", ' ', translated_input)
-    txt = txt.lower().strip()
+  if not model_loaded:
+        return "The model is still loading, please try again later.",400
+  #translated_input = translator.translate(user_input, src=language_code, dest='en').text # This is removed
+  translated_input = user_input # Removed translator for now, so use untranslated
+  txt = re.sub("[^a-zA-Z']", ' ', translated_input)
+  txt = txt.lower().strip()
 
-    encoded_dict = tokenizer.encode_plus(
-        txt,
-        txt,
-        add_special_tokens=True,
-        max_length=max_len,
-        padding='max_length',
-        truncation = True,
-        return_attention_mask=True,
-        return_tensors='pt',
-    )
+  encoded_dict = tokenizer.encode_plus(
+      txt,
+      txt,
+      add_special_tokens=True,
+      max_length=max_len,
+      padding='max_length',
+      truncation = True,
+      return_attention_mask=True,
+      return_tensors='pt',
+  )
 
-    input_ids = encoded_dict['input_ids'].to(device)
-    attention_mask = encoded_dict['attention_mask'].to(device)
+  input_ids = encoded_dict['input_ids'].to(device)
+  attention_mask = encoded_dict['attention_mask'].to(device)
 
-    with torch.no_grad():
-      outputs = model(input_ids, attention_mask=attention_mask)
+  with torch.no_grad():
+    outputs = model(input_ids, attention_mask=attention_mask)
 
 
-    probabilities = torch.nn.functional.softmax(outputs, dim=1).cpu().numpy()
+  probabilities = torch.nn.functional.softmax(outputs, dim=1).cpu().numpy()
 
-    predicted_label_idx = np.argmax(probabilities, axis=1)[0]
-    tag = label_encoder.inverse_transform([predicted_label_idx])[0]
-    logging.info(f"Predicted Tag: {tag}")
+  predicted_label_idx = np.argmax(probabilities, axis=1)[0]
+  tag = label_encoder.inverse_transform([predicted_label_idx])[0]
+  logging.info(f"Predicted Tag: {tag}")
 
-    if tag in df['tag'].values:
-        responses = df[df['tag'] == tag]['responses'].values[0]
-        response = random.choice(responses)
-    else:
-        response = "I'm not sure how to respond to that. Can you rephrase?"
+  if tag in df['tag'].values:
+      responses = df[df['tag'] == tag]['responses'].values[0]
+      response = random.choice(responses)
+  else:
+      response = "I'm not sure how to respond to that. Can you rephrase?"
 
-    translated_response = translator.translate(response, src='en', dest=language_code).text
-    return translated_response
+  #translated_response = translator.translate(response, src='en', dest=language_code).text #This is removed
+  translated_response = response # Removed translator, so just use english
+
+  return translated_response
 
 
 # --- Flask Routes ---
@@ -233,5 +243,5 @@ def index():
     return "ElevateMind's Mental Health Chatbot API"
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
+    port = int(os.environ.get('PORT', 5000)) # default back to 5000
     app.run(host='0.0.0.0', port=port)
